@@ -8,6 +8,15 @@ C 단계 메인 흐름이 통합되기 전에 D 컴포넌트만 따로 시연하
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# streamlit run 실행 시 sys.path[0]은 스크립트 디렉토리(mise/)가 되어
+# `from mise.xxx import ...`가 실패한다. 프로젝트 루트를 명시적으로 추가.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 from PIL import Image, ImageDraw
 
 import streamlit as st
