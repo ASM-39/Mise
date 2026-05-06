@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Dict, List
+
 from pydantic import BaseModel
 
 
@@ -6,7 +10,7 @@ class SceneElements(BaseModel):
     background: str
     time: str
     place: str
-    objects: list[str] = []
+    objects: List[str] = []
     action: str
     emotion: str
     mood: str
@@ -19,7 +23,7 @@ class SceneElements(BaseModel):
 class ExtractionResult(BaseModel):
     """Call 1 출력: 12개 요소 + 각 요소의 출처 구분"""
     elements: SceneElements
-    source_type: dict[str, str]
+    source_type: Dict[str, str]
 
 
 class FillResult(BaseModel):
@@ -39,11 +43,11 @@ class PromptResult(BaseModel):
     positive_prompt: str
     negative_prompt: str
     style: str = "cinematic"
-    missing_info: list[str] = []
+    missing_info: List[str] = []
 
 
 class SceneSchema(BaseModel):
     """최종 반환: 요소 + 출처 + 프롬프트"""
     elements: SceneElements
-    source_type: dict[str, str]
+    source_type: Dict[str, str]
     prompt: PromptResult
