@@ -22,8 +22,20 @@ class ExtractionResult(BaseModel):
     source_type: dict[str, str]
 
 
+class FillResult(BaseModel):
+    """Call 3 출력: 빈 요소를 문맥에 맞게 추론해 채운 결과"""
+    elements: SceneElements
+    fill_reason: dict[str, str] = {}
+
+
+class VerifyResult(BaseModel):
+    """Call 4 출력: 일관성 검증 후 최종 요소"""
+    elements: SceneElements
+    corrections: list[str] = []
+
+
 class PromptResult(BaseModel):
-    """Call 2 출력: 이미지 생성용 프롬프트"""
+    """Call 5 출력: 이미지 생성용 프롬프트"""
     positive_prompt: str
     negative_prompt: str
     style: str = "cinematic"

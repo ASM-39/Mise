@@ -56,14 +56,27 @@ def _make_mock_prompt_result():
     )
 
 
+def _setup_mock_llm(side_effects):
+    """LangGraph 파이프라인에서 사용할 mock LLM을 설정한다.
+
+    각 노드에서 template | llm.with_structured_output(Model) 형태로 체인이 구성되고,
+    체인이 invoke되면 side_effects 순서대로 결과를 반환한다.
+    """
+    mock_llm = MagicMock()
+    mock_chain = MagicMock()
+    mock_chain.side_effect = side_effects
+    mock_llm.with_structured_output.return_value = mock_chain
+    return mock_llm
+
+
 class TestExtractSceneGenerate:
-    @patch("mise.chains.scene_extractor._call_prompt")
-    @patch("mise.chains.scene_extractor._call_extract")
     @patch("mise.chains.scene_extractor._create_llm")
-    def test_generate_mode_returns_scene_schema(self, mock_create_llm, mock_call_extract, mock_call_prompt):
-        mock_create_llm.return_value = MagicMock()
-        mock_call_extract.return_value = _make_mock_extraction_result()
-        mock_call_prompt.return_value = _make_mock_prompt_result()
+    def test_generate_mode_returns_scene_schema(self, mock_create_llm):
+        # 모든 요소가 채워진 경우: extract(1) + prompt(1) = 2회 LLM 호출
+        mock_create_llm.side_effect = [
+            _setup_mock_llm([_make_mock_extraction_result()]),
+            _setup_mock_llm([_make_mock_prompt_result()]),
+        ]
 
         result = extract_scene(NOVEL_SAMPLE_1)
 
@@ -73,26 +86,15 @@ class TestExtractSceneGenerate:
         assert result.elements.character == "검은 갑옷을 입은 기사"
         assert "cinematic" in result.prompt.positive_prompt
 
-    @patch("mise.chains.scene_extractor._call_prompt")
-    @patch("mise.chains.scene_extractor._call_extract")
-    @patch("mise.chains.scene_extractor._create_llm")
-    def test_generate_calls_gemini_twice(self, mock_create_llm, mock_call_extract, mock_call_prompt):
-        mock_create_llm.return_value = MagicMock()
-        mock_call_extract.return_value = _make_mock_extraction_result()
-        mock_call_prompt.return_value = _make_mock_prompt_result()
-
-        extract_scene(NOVEL_SAMPLE_1)
-
-        mock_call_extract.assert_called_once()
-        mock_call_prompt.assert_called_once()
-
 
 class TestExtractSceneRegenerate:
-    @patch("mise.chains.scene_extractor._call_prompt")
     @patch("mise.chains.scene_extractor._create_llm")
-    def test_regenerate_skips_call1(self, mock_create_llm, mock_call_prompt):
-        mock_create_llm.return_value = MagicMock()
-        mock_call_prompt.return_value = _make_mock_prompt_result()
+    def test_regenerate_skips_extract(self, mock_create_llm):
+        # regenerate: extract_node는 prev_scene 사용 (LLM 호출 없음)
+        # prompt_node만 LLM 호출 = 1회
+        mock_create_llm.side_effect = [
+            _setup_mock_llm([_make_mock_prompt_result()]),
+        ]
 
         prev_scene = {
             "elements": _make_mock_elements().model_dump(),
@@ -101,7 +103,7 @@ class TestExtractSceneRegenerate:
         result = extract_scene(NOVEL_SAMPLE_1, mode="regenerate", prev_scene=prev_scene)
 
         assert isinstance(result, SceneSchema)
-        mock_call_prompt.assert_called_once()
+        assert mock_create_llm.call_count == 1
 
 
 class TestExtractSceneValidation:
@@ -120,12 +122,11 @@ class TestExtractSceneValidation:
 
     def test_exactly_1000_chars_passes(self):
         text = "가" * 1000
-        with patch("mise.chains.scene_extractor._call_prompt") as mock_call_prompt, \
-             patch("mise.chains.scene_extractor._call_extract") as mock_call_extract, \
-             patch("mise.chains.scene_extractor._create_llm") as mock_create_llm:
-            mock_create_llm.return_value = MagicMock()
-            mock_call_extract.return_value = _make_mock_extraction_result()
-            mock_call_prompt.return_value = _make_mock_prompt_result()
+        with patch("mise.chains.scene_extractor._create_llm") as mock_create_llm:
+            mock_create_llm.side_effect = [
+                _setup_mock_llm([_make_mock_extraction_result()]),
+                _setup_mock_llm([_make_mock_prompt_result()]),
+            ]
             result = extract_scene(text)
             assert isinstance(result, SceneSchema)
 

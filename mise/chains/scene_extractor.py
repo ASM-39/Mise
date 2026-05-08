@@ -1,12 +1,19 @@
 import json
-from typing import Optional
+from typing import Optional, Annotated
+from operator import add
 
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
 
 from mise.config import GOOGLE_API_KEY, MODEL_NAME, MAX_INPUT_LENGTH, API_TIMEOUT
-from mise.models.scene_schema import ExtractionResult, PromptResult, SceneSchema, SceneElements
+from mise.models.scene_schema import (
+    ExtractionResult, FillResult, PromptResult, SceneSchema, SceneElements, VerifyResult,
+)
 from mise.prompts.extraction_prompt import _prompt_template as extraction_template
 from mise.prompts.prompt_generator import _prompt_template as prompt_template
+from mise.prompts.fill_prompt import _prompt_template as fill_template
+from mise.prompts.verify_prompt import _prompt_template as verify_template
 
 
 def _create_llm() -> ChatGoogleGenerativeAI:
@@ -29,40 +36,160 @@ def _validate_input(novel_text: str, mode: str, prev_scene: Optional[dict]) -> N
         raise ValueError("regenerate 모드에서는 prev_scene이 필요합니다.")
 
 
-def _call_extract(novel_text: str, llm: ChatGoogleGenerativeAI) -> ExtractionResult:
-    chain = extraction_template | llm.with_structured_output(ExtractionResult)
-    return chain.invoke({"novel_text": novel_text})
+# ── LangGraph State ─────────────────────────────────────────────────
+class PipelineState(TypedDict, total=False):
+    novel_text: str
+    mode: str
+    prev_scene: Optional[dict]
+    elements: SceneElements
+    source_type: dict[str, str]
+    style: str
+    missing_fields: list[str]
 
 
-def _call_prompt(elements: SceneElements, style: str, llm: ChatGoogleGenerativeAI) -> PromptResult:
-    elements_dict = elements.model_dump()
-    elements_json = json.dumps(elements_dict, ensure_ascii=False)
+# ── Node 1: 장면 추출 ───────────────────────────────────────────────
+def extract_node(state: PipelineState) -> dict:
+    if state["mode"] == "generate":
+        llm = _create_llm()
+        chain = extraction_template | llm.with_structured_output(ExtractionResult)
+        result = chain.invoke({"novel_text": state["novel_text"]})
+        return {
+            "elements": result.elements,
+            "source_type": result.source_type,
+            "style": "cinematic",
+        }
+    else:
+        prev = state["prev_scene"]
+        return {
+            "elements": SceneElements.model_validate(prev["elements"]),
+            "source_type": prev.get("source_type", {}),
+            "style": prev.get("prompt", {}).get("style", "cinematic"),
+        }
+
+
+# ── Node 2: 누락 검사 ───────────────────────────────────────────────
+def check_missing_node(state: PipelineState) -> dict:
+    missing = []
+    for field_name in SceneElements.model_fields:
+        if field_name == "objects":
+            continue
+        if getattr(state["elements"], field_name) == "":
+            missing.append(field_name)
+    return {"missing_fields": missing}
+
+
+# ── Node 3: 보완 생성 ───────────────────────────────────────────────
+def fill_node(state: PipelineState) -> dict:
+    missing = state["missing_fields"]
+
+    llm = _create_llm()
+    elements_json = json.dumps(state["elements"].model_dump(), ensure_ascii=False)
+    chain = fill_template | llm.with_structured_output(FillResult)
+    result = chain.invoke({
+        "novel_text": state["novel_text"],
+        "elements_json": elements_json,
+    })
+
+    updated_source = dict(state["source_type"])
+    for field in missing:
+        updated_source[field] = "inferred"
+
+    return {
+        "elements": result.elements,
+        "source_type": updated_source,
+    }
+
+
+# ── Node 4: 일관성 검증 ─────────────────────────────────────────────
+def verify_node(state: PipelineState) -> dict:
+    llm = _create_llm()
+    elements_json = json.dumps(state["elements"].model_dump(), ensure_ascii=False)
+    chain = verify_template | llm.with_structured_output(VerifyResult)
+    result = chain.invoke({
+        "novel_text": state["novel_text"],
+        "elements_json": elements_json,
+    })
+    return {"elements": result.elements}
+
+
+# ── Node 5: 프롬프트 생성 ───────────────────────────────────────────
+def prompt_node(state: PipelineState) -> dict:
+    llm = _create_llm()
+    elements_json = json.dumps(state["elements"].model_dump(), ensure_ascii=False)
     chain = prompt_template | llm.with_structured_output(PromptResult)
-    return chain.invoke({"elements_json": elements_json, "style": style})
+    result = chain.invoke({
+        "elements_json": elements_json,
+        "style": state["style"],
+    })
+    return {"prompt_result": result}
 
 
+# ── Graph 빌드 ───────────────────────────────────────────────────────
+class _SceneState(TypedDict, total=False):
+    novel_text: str
+    mode: str
+    prev_scene: Optional[dict]
+    elements: SceneElements
+    source_type: dict[str, str]
+    style: str
+    missing_fields: list[str]
+    prompt_result: PromptResult
+
+
+def _route_after_check(state: PipelineState) -> str:
+    """check_missing 이후 분기: 누락이 있으면 fill, 없으면 prompt로 바로 이동"""
+    if state["missing_fields"]:
+        return "fill"
+    return "prompt"
+
+
+def _build_graph() -> StateGraph:
+    graph = StateGraph(_SceneState)
+
+    # 노드 등록
+    graph.add_node("extract", extract_node)
+    graph.add_node("check_missing", check_missing_node)
+    graph.add_node("fill", fill_node)
+    graph.add_node("verify", verify_node)
+    graph.add_node("prompt", prompt_node)
+
+    # 엣지 연결
+    graph.add_edge(START, "extract")
+    graph.add_edge("extract", "check_missing")
+
+    # 조건부 엣지: 누락 여부에 따라 경로 분기
+    graph.add_conditional_edges(
+        "check_missing",
+        _route_after_check,
+        {"fill": "fill", "prompt": "prompt"},
+    )
+
+    graph.add_edge("fill", "verify")
+    graph.add_edge("verify", "prompt")
+    graph.add_edge("prompt", END)
+
+    return graph.compile()
+
+
+_GRAPH = _build_graph()
+
+
+# ── 공개 API ─────────────────────────────────────────────────────────
 def extract_scene(
     novel_text: str,
     mode: str = "generate",
     prev_scene: Optional[dict] = None,
 ) -> SceneSchema:
     _validate_input(novel_text, mode, prev_scene)
-    llm = _create_llm()
 
-    if mode == "generate":
-        extraction = _call_extract(novel_text, llm)
-        elements = extraction.elements
-        source_type = extraction.source_type
-        style = "cinematic"
-    else:
-        elements = SceneElements.model_validate(prev_scene["elements"])
-        source_type = prev_scene.get("source_type", {})
-        style = prev_scene.get("prompt", {}).get("style", "cinematic")
-
-    prompt_result = _call_prompt(elements, style, llm)
+    result = _GRAPH.invoke({
+        "novel_text": novel_text,
+        "mode": mode,
+        "prev_scene": prev_scene,
+    })
 
     return SceneSchema(
-        elements=elements,
-        source_type=source_type,
-        prompt=prompt_result,
+        elements=result["elements"],
+        source_type=result["source_type"],
+        prompt=result["prompt_result"],
     )
