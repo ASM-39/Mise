@@ -2,10 +2,7 @@ from google import genai
 from google.genai.errors import ClientError
 from PIL import Image
 
-from mise.config import GOOGLE_API_KEY
-
-
-IMAGE_MODEL_NAME = "gemini-2.5-flash-image"
+from mise.config import GOOGLE_API_KEY, IMAGE_MODEL_NAME
 
 
 def _build_image_prompt(positive: str, negative: str, style: str) -> str:
