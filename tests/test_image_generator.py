@@ -47,7 +47,7 @@ class TestGenerateImage:
         mock_client.models.generate_content.return_value = response
         mock_client_cls.return_value = mock_client
 
-        with pytest.raises(RuntimeError, match="이미지를 찾지 못했습니다"):
+        with pytest.raises(RuntimeError, match="이미지 생성 응답에 이미지 데이터가 없습니다."):
             generate_image(
                 positive="cinematic, a mage above ruined walls",
                 negative="blurry",
