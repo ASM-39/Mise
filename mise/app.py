@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 from datetime import datetime
 from typing import Any
 
@@ -15,8 +16,7 @@ STYLE_PRESETS = {
     "시네마틱": "cinematic",
     "수채화": "watercolor painting",
     "픽셀아트": "pixel art",
-    "애니메이션": "anime style",
-    "판타지 일러스트": "fantasy illustration",
+    "웹툰풍": "webtoon style",
 }
 
 ELEMENT_LABELS = {
@@ -72,17 +72,7 @@ def run_extract_scene(
 ) -> SceneSchema:
     from mise.chains.scene_extractor import extract_scene
 
-    result = extract_scene(novel_text, mode=mode, prev_scene=prev_scene)
-
-    if mode == "generate" and style_value != result.prompt.style:
-        styled_prev_scene = {
-            "elements": result.elements.model_dump(),
-            "source_type": result.source_type,
-            "prompt": {"style": style_value},
-        }
-        result = extract_scene(novel_text, mode="regenerate", prev_scene=styled_prev_scene)
-
-    return result
+    return extract_scene(novel_text, mode=mode, prev_scene=prev_scene)
 
 
 def render_styles() -> None:
@@ -155,7 +145,7 @@ def render_element_cards(scene: dict[str, Any]) -> None:
     for row_start in range(0, len(ELEMENT_LABELS), 4):
         cols = st.columns(4)
         for col, key in zip(cols, list(ELEMENT_LABELS)[row_start : row_start + 4]):
-            value = format_element_value(key, elements.get(key))
+            value = html.escape(format_element_value(key, elements.get(key)))
             source = source_type.get(key, "missing")
             with col:
                 st.markdown(
