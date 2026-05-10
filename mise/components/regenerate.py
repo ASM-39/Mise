@@ -11,6 +11,7 @@ import streamlit as st
 
 from mise.state import (
     REGEN_LIMIT,
+    Keys,
     can_regenerate,
     increment_regen,
     is_dirty,
@@ -37,7 +38,7 @@ def render_regenerate_button(
         label: 버튼 라벨.
         button_key: 위젯 키 (한 페이지에 여러 개 둘 일은 없지만 충돌 방지용).
     """
-    used = st.session_state.get("d_regen_count", 0)
+    used = st.session_state.get(Keys.REGEN_COUNT, 0)
     remaining = REGEN_LIMIT - used
 
     col_btn, col_count = st.columns([1, 2])

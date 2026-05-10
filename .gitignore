@@ -5,3 +5,4 @@ __pycache__/
 !.env.example
 .DS_Store
 .pytest_cache/
+.claude/settings.local.json
