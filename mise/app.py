@@ -6,6 +6,8 @@ from typing import Any
 
 import streamlit as st
 
+from mise.components.history import encode_image_to_bytes
+from mise.generators.image_generator import generate_image
 from mise.models.scene_schema import SceneSchema
 
 
@@ -52,16 +54,30 @@ def init_session_state() -> None:
         st.session_state.selected_style_label = "시네마틱"
 
 
-def add_result(result: SceneSchema, novel_text: str, style_label: str) -> None:
+def add_result(
+    result: SceneSchema,
+    novel_text: str,
+    style_label: str,
+    image_bytes: bytes | None = None,
+) -> None:
     item = {
         "created_at": datetime.now().strftime("%H:%M:%S"),
         "novel_text": novel_text,
         "style_label": style_label,
         "scene": result.model_dump(),
+        "image_bytes": image_bytes,
     }
     st.session_state.results.append(item)
     st.session_state.results = st.session_state.results[-MAX_RESULTS:]
     st.session_state.current_result = item
+
+
+def run_generate_image(scene: SceneSchema, style_value: str):
+    return generate_image(
+        positive=scene.prompt.positive_prompt,
+        negative=scene.prompt.negative_prompt,
+        style=style_value,
+    )
 
 
 def run_extract_scene(
@@ -174,12 +190,16 @@ def render_prompt_preview(scene: dict[str, Any]) -> None:
             st.write(", ".join(missing_info))
 
 
-def render_image_placeholder() -> None:
+def render_generated_image(item: dict[str, Any]) -> None:
     st.subheader("생성된 이미지")
+    image_bytes = item.get("image_bytes")
+    if image_bytes:
+        st.image(image_bytes, width="stretch")
+        return
     st.markdown(
         """
         <div class="mise-empty">
-            이미지 생성 API 연동 전입니다. 현재는 장면 분석과 이미지 생성용 프롬프트까지 생성됩니다.
+            이번 결과에는 이미지가 없습니다. 시각화/재생성을 다시 시도해주세요.
         </div>
         """,
         unsafe_allow_html=True,
@@ -227,11 +247,23 @@ def render_regenerate_form(current: dict[str, Any], novel_text: str, style_value
                     mode="regenerate",
                     prev_scene=prev_scene,
                 )
-            add_result(result, novel_text, st.session_state.selected_style_label)
-            st.success("프롬프트를 다시 생성했습니다.")
+            result = SceneSchema(
+                elements=result.elements,
+                source_type=result.source_type,
+                prompt=result.prompt.model_copy(update={"style": style_value}),
+            )
+            with st.spinner("이미지를 다시 생성하는 중입니다... (10–20초)"):
+                image = run_generate_image(result, style_value)
+            add_result(
+                result,
+                novel_text,
+                st.session_state.selected_style_label,
+                image_bytes=encode_image_to_bytes(image),
+            )
+            st.success("이미지를 다시 생성했습니다.")
             st.rerun()
         except Exception as exc:
-            st.error(f"프롬프트 재생성 중 문제가 발생했습니다: {exc}")
+            st.error(f"재생성 중 문제가 발생했습니다: {exc}")
 
 
 def render_history() -> None:
@@ -290,11 +322,23 @@ def main() -> None:
             try:
                 with st.spinner("장면 분석과 프롬프트 생성을 진행하는 중입니다..."):
                     result = run_extract_scene(novel_text, style_value)
+                result = SceneSchema(
+                    elements=result.elements,
+                    source_type=result.source_type,
+                    prompt=result.prompt.model_copy(update={"style": style_value}),
+                )
+                with st.spinner("이미지를 생성하는 중입니다... (10–20초)"):
+                    image = run_generate_image(result, style_value)
                 st.session_state.current_input = novel_text
-                add_result(result, novel_text, style_label)
-                st.success("장면 분석이 완료되었습니다.")
+                add_result(
+                    result,
+                    novel_text,
+                    style_label,
+                    image_bytes=encode_image_to_bytes(image),
+                )
+                st.success("이미지 생성이 완료되었습니다.")
             except Exception as exc:
-                st.error(f"장면 분석 중 문제가 발생했습니다: {exc}")
+                st.error(f"이미지 생성 중 문제가 발생했습니다: {exc}")
 
     current = st.session_state.current_result
     if current:
@@ -302,7 +346,7 @@ def main() -> None:
         st.subheader("장면 분석 결과")
         render_element_cards(current["scene"])
         render_prompt_preview(current["scene"])
-        render_image_placeholder()
+        render_generated_image(current)
         render_regenerate_form(current, current["novel_text"], STYLE_PRESETS[current["style_label"]])
         render_history()
     else:
