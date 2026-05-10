@@ -86,10 +86,13 @@ def render_history_detail() -> None:
             st.write(selected.novel_text)
 
 
-def encode_image_to_bytes(image: Optional[Image.Image]) -> Optional[bytes]:
-    """PIL Image를 PNG bytes로 직렬화. None이면 None 반환."""
+def encode_image_to_bytes(image) -> Optional[bytes]:
+    """PIL Image 또는 google.genai Image를 PNG bytes로 직렬화. None이면 None 반환."""
     if image is None:
         return None
+    raw = getattr(image, "image_bytes", None)
+    if raw is not None:
+        return raw
     buf = io.BytesIO()
     image.save(buf, format="PNG")
     return buf.getvalue()
