@@ -38,6 +38,7 @@ from mise.state import (
     Keys,
     append_history,
     build_prev_scene_payload,
+    compute_changed_values,
     get_edited_elements,
     get_style_value,
     init_state,
@@ -112,9 +113,16 @@ def _on_regenerate() -> None:
     # 사용자가 사이드바에서 바꾼 스타일을 backend에 전달
     prev["prompt"]["style"] = style_value
 
+    changed_values = compute_changed_values()
+
     try:
         with st.spinner("재분석 중... (10–15초)"):
-            scene = extract_scene(novel_text, mode="regenerate", prev_scene=prev)
+            scene = extract_scene(
+                novel_text,
+                mode="regenerate",
+                prev_scene=prev,
+                changed_values=changed_values,
+            )
 
         scene = SceneSchema(
             elements=scene.elements,
